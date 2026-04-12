@@ -10,13 +10,14 @@ import requests
 import json
 import sys
 import os
-import time
-from datetime import datetime, timedelta
+import requests, time, re, json
+from datetime import datetime
 from pathlib import Path
 
 # ─── 新增模块 ───────────────────────────────────────────────
-from summarize import gen_daily_summary, format_summary_markdown
-from rank import rank_content
+from scripts.llm_utils import extract_response
+from scripts.summarize import gen_daily_summary, format_summary_markdown
+from scripts.rank import rank_content
 
 # ─── 配置 ───────────────────────────────────────────────
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
@@ -63,52 +64,22 @@ def gen_judgment(item: dict, category: str) -> str:
     if not OPENAI_API_KEY:
         return ""
 
-    system_prompt = (
-        "你是一位资深技术观察者，擅长用简洁有力的中文为技术资讯撰写个人点评判断。"
-        "要求：\n"
-        "1. 非专业名词全部使用中文\n"
-        "2. 判断要具体、有观点，不说废话\n"
-        "3. 2-4句话为宜\n"
-        "4. 不要重复标题已有的信息\n"
-        "5. 可以包含：对技术趋势的判断、与当前行业热点的联系、是否值得关注、学习价值\n"
-    )
-
     if category == "ai_news":
-        user_prompt = f"""为以下AI论文撰写个人判断：
-
-标题：{item['title']}
-摘要：{item.get('abstract', '无')}
-链接：{item.get('url', '')}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"title\": \"{item['title']}\", \"abstract\": \"{item.get('abstract', 'N/A')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
     elif category == "github":
-        user_prompt = f"""为以下开源项目撰写个人判断：
-
-项目：{item['name']}
-描述：{item.get('description', '无')}
-语言：{item.get('language', '-')} | Stars：{item.get('stars', '-')} | Forks：{item.get('forks', '-')}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"name\": \"{item['name']}\", \"description\": \"{item.get('description', 'N/A')}\", \"language\": \"{item.get('language', '-')}\", \"stars\": \"{item.get('stars', '-')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
     else:
-        user_prompt = f"""为以下技术问题撰写个人判断：
-
-问题：{item['title']}
-标签：{', '.join(item.get('tags', []))}
-投票：{item.get('votes', 0)} | 回答数：{item.get('answers', 0)}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"title\": \"{item['title']}\", \"tags\": {item.get('tags', [])}}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
 
     payload = {
         "model": LLM_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "system", "content": "Output only a JSON object, nothing else. Example: {\"judgment\": \"some text\"}"},
+            {"role": "user", "content": f"{user_prompt}\nRespond ONLY with: {{\"judgment\": \"...\"}}"}
         ],
-        "max_tokens": 300,
+        "max_tokens": 800,
         "temperature": 0.7,
     }
-
-    # 兼容不同 API 端点
     if "openrouter" in OPENAI_BASE_URL:
         payload["model"] = LLM_MODEL
     elif "groq" in OPENAI_BASE_URL:
@@ -126,8 +97,25 @@ def gen_judgment(item: dict, category: str) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        return content
+        raw = data["choices"][0]["message"].get("content", "").strip()
+        # 尝试 JSON 解析（支持去掉 markdown 代码块）
+        try:
+            raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
+            raw = re.sub(r"\s*```$", "", raw).strip()
+            parsed = json.loads(raw)
+            answer = parsed.get("judgment", parsed.get("answer", parsed.get("summary", "")))
+            if answer:
+                return answer
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            pass
+        # JSON 解析失败：检查是否被截断的 JSON（如 '{"judgment": "...' 只有开头）
+        if raw.startswith("{") and ':' in raw and raw.count('"') < 6:
+            # 尝试用正则从截断 JSON 中提取字段值
+            m = re.search(r'"\w+"\s*:\s*"([^"]*)"', raw)
+            if m:
+                return m.group(1).strip()
+        # 直接返回原始 content
+        return raw.strip('"').strip("'").strip()
     except Exception as e:
         return f"（判断生成失败: {e}）"
 
@@ -443,16 +431,20 @@ def main(date_str=None, use_llm=True, use_ranking=True, deliver_channels=None):
 
 
 if __name__ == "__main__":
-    date_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    # 找出第一个非 flag 参数作为日期
+    date_arg = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--"):
+            date_arg = arg
+            break
+
     use_llm = "--no-llm" not in sys.argv
     use_ranking = "--no-ranking" not in sys.argv
 
     # 解析 --deliver 参数
     deliver_channels = None
-    deliver_arg = None
     for arg in sys.argv:
         if arg.startswith("--deliver="):
-            deliver_arg = arg.split("=", 1)[1]
-            deliver_channels = [ch.strip() for ch in deliver_arg.split(",") if ch.strip()]
+            deliver_channels = [ch.strip() for ch in arg.split("=", 1)[1].split(",") if ch.strip()]
 
     main(date_str=date_arg, use_llm=use_llm, use_ranking=use_ranking, deliver_channels=deliver_channels)

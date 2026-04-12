@@ -4,8 +4,10 @@ A1: 每日摘要生成器
 在每份快讯开头，由 LLM 生成一段今日技术形势综述（3-5 句话）
 """
 
-import requests
 import os
+import re
+import json
+import requests
 from typing import List, Dict
 
 
@@ -31,23 +33,7 @@ def build_summary_prompt(ai_news: List[dict], github_trending: List[dict], stack
     # 提取 SO 问题标题
     so_titles = "；".join(q.get("title", "") for q in stackoverflow[:5]) or "无"
 
-    prompt = f"""你是一位技术主笔，为今日技术快讯撰写一段50-80字的导语，帮助读者快速把握今日最重要的技术趋势。
-
-今日内容概览：
-
-【AI 论文】{ai_titles}
-
-【GitHub 热门】{gh_text}
-
-【StackOverflow 热点】{so_titles}
-
-要求：
-1. 50-80 字，简洁有力
-2. 点出今日最值得关注的 1-2 个技术趋势
-3. 不要罗列具体条目，要提炼趋势
-4. 使用中文，行文自然
-5. 不要以"今日"开头
-"""
+    prompt = f"今日内容：\n\n【AI论文】{ai_titles}\n【GitHub】{gh_text}\n【SO】{so_titles}"
     return prompt
 
 
@@ -63,14 +49,14 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
         "messages": [
             {
                 "role": "system",
-                "content": "你是一位资深技术主笔，擅长用简洁有力的语言捕捉技术趋势。输出只包含导语正文，不要额外解释。"
+                "content": "Output only a JSON object, nothing else. Example: {\"summary\": \"some text\"}"
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": f"{prompt}\nRespond ONLY with: {{\"summary\": \"中文导语，50-80字\"}}"
             }
         ],
-        "max_tokens": 200,
+        "max_tokens": 800,
         "temperature": 0.7,
     }
 
@@ -92,10 +78,24 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
         )
         resp.raise_for_status()
         data = resp.json()
-        summary = data["choices"][0]["message"]["content"].strip()
-        # 去掉可能的引号
-        summary = summary.strip('"').strip("'").strip()
-        return summary
+        raw = data["choices"][0]["message"].get("content", "").strip()
+        # 尝试 JSON 解析
+        try:
+            raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
+            raw = re.sub(r"\s*```$", "", raw).strip()
+            parsed = json.loads(raw)
+            answer = parsed.get("summary", parsed.get("content", ""))
+            if answer:
+                return answer
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            pass
+        # JSON 解析失败：检查是否被截断的 JSON
+        if raw.startswith("{") and ':' in raw and raw.count('"') < 6:
+            m = re.search(r'"\w+"\s*:\s*"([^"]*)"', raw)
+            if m:
+                return m.group(1).strip()
+        # 直接返回原始 content
+        return raw.strip('"').strip("'").strip()
     except Exception as e:
         return f"（摘要生成失败: {e}）"
 
