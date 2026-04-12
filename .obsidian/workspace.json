@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "bb06a678d3a66790",
+        "id": "bc66ec9b74e0618d",
         "type": "tabs",
         "children": [
           {
-            "id": "0662bca3a97f497c",
+            "id": "5ee29a0f6247f1e4",
             "type": "leaf",
             "state": {
               "type": "markdown",
@@ -195,8 +195,10 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "0662bca3a97f497c",
+  "active": "5ee29a0f6247f1e4",
   "lastOpenFiles": [
+    "daily/2026-04-12.md",
+    "daily/2026-04-07.md",
     "scripts/__pycache__/fetch_news.cpython-311.pyc",
     "scripts/__pycache__",
     "daily/2026-04-01.md",
