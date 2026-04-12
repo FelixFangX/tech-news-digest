@@ -5,16 +5,42 @@ B3: 多渠道分发
 """
 
 import os
+import re
 import smtplib
 import requests
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Optional
 
+# ─── 加载 preferences.yaml ────────────────────────────────
+def _load_preferences():
+    """加载 preferences.yaml（env vars 优先）"""
+    cfg = {}
+    pref_file = Path(__file__).parent.parent / "preferences.yaml"
+    if pref_file.exists():
+        try:
+            import yaml
+            with open(pref_file, encoding="utf-8") as f:
+                raw = f.read()
+            # 替换 ${ENV_VAR} 形式的环境变量
+            def repl(m):
+                return os.getenv(m.group(1), "")
+            raw = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, raw)
+            raw = re.sub(r"#.*", "", raw)  # 去掉注释行
+            data = yaml.safe_load(raw)
+            if data:
+                cfg = data
+        except Exception:
+            pass
+    return cfg
+
+PREF = _load_preferences()
+
 
 # ─── Telegram ────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", PREF.get("delivery", {}).get("telegram_bot_token", ""))
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", PREF.get("delivery", {}).get("telegram_chat_id", ""))
 
 
 def send_telegram(text: str, parse_mode: str = "Markdown") -> bool:
@@ -57,12 +83,12 @@ def md_to_telegram(text: str) -> str:
 
 
 # ─── Email ────────────────────────────────────────────────────
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
-EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")
-EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+SMTP_HOST = os.getenv("SMTP_HOST", PREF.get("delivery", {}).get("smtp_host", ""))
+SMTP_PORT = int(os.getenv("SMTP_PORT", str(PREF.get("delivery", {}).get("smtp_port", 587))))
+SMTP_USER = os.getenv("SMTP_USER", PREF.get("delivery", {}).get("smtp_user", ""))
+SMTP_PASS = os.getenv("SMTP_PASS", PREF.get("delivery", {}).get("smtp_pass", ""))
+EMAIL_TO = os.getenv("EMAIL_TO", ",".join(PREF.get("delivery", {}).get("email_to", [])))
+EMAIL_FROM = os.getenv("EMAIL_FROM", PREF.get("delivery", {}).get("email_from", SMTP_USER))
 
 
 def send_email(subject: str, html_body: str, text_body: str = "") -> bool:
@@ -126,7 +152,7 @@ def md_to_html(md_text: str) -> str:
 # ─── WeChat (ilink) ──────────────────────────────────────────
 # 复用 research-thinking-ai 中已有的 WeChat ilink 基础设施
 # 通过环境变量 WEIXIN_ILINK_HOOK 指定发送端点
-WEIXIN_ILINK_HOOK = os.getenv("WEIXIN_ILINK_HOOK", "")
+WEIXIN_ILINK_HOOK = os.getenv("WEIXIN_ILINK_HOOK", PREF.get("delivery", {}).get("wechat_ilink_hook", ""))
 
 
 def send_wechat(text: str) -> bool:
