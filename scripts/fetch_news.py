@@ -137,21 +137,37 @@ def gen_deep_analysis_batch(items: list, category: str) -> list:
         data = resp.json()
         raw = data["choices"][0]["message"].get("content", "").strip()
 
-        # 解析 JSONL
+        # 解析响应：优先尝试 JSON 数组格式 [{}]，回退到 JSONL 格式 {}\n{}
         raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
         raw = re.sub(r"\s*```$", "", raw).strip()
         parsed_map = {}
-        for line in raw.split("\n"):
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                obj = json.loads(line)
-                idx = obj.get("id")
-                if idx is not None:
-                    parsed_map[idx + id_offset] = obj
-            except:
-                continue
+        try:
+            # 尝试作为完整 JSON 数组解析
+            arr = json.loads(raw)
+            if isinstance(arr, list):
+                for idx, obj in enumerate(arr):
+                    if isinstance(obj, dict):
+                        parsed_map[idx + id_offset] = obj
+        except json.JSONDecodeError:
+            # 回退到 JSONL 逐行解析
+            for line in raw.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # 去掉可能的前缀（如 "[{" 或 "{"）
+                if line.startswith("["):
+                    line = line[1:]
+                if line.startswith(","):
+                    line = line[1:]
+                if not line.startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(line.rstrip(","))
+                    idx = obj.get("id")
+                    if idx is not None:
+                        parsed_map[idx + id_offset] = obj
+                except:
+                    continue
         return parsed_map
 
     # 串行执行 + 指数退避重试（避免 429）
