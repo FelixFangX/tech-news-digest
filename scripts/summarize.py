@@ -11,9 +11,9 @@ import requests
 from typing import List, Dict
 
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://minimax.a7m.com.cn/v1")
+MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
 
 
 def build_summary_prompt(ai_news: List[dict], github_trending: List[dict], stackoverflow: List[dict]) -> str:
@@ -39,13 +39,13 @@ def build_summary_prompt(ai_news: List[dict], github_trending: List[dict], stack
 
 def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackoverflow: List[dict]) -> str:
     """调用 LLM 生成每日摘要"""
-    if not OPENAI_API_KEY:
-        return "（未配置 OPENAI_API_KEY，跳过摘要）"
+    if not MINIMAX_API_KEY:
+        return "（未配置 MINIMAX_API_KEY，跳过摘要）"
 
     prompt = build_summary_prompt(ai_news, github_trending, stackoverflow)
 
     payload = {
-        "model": LLM_MODEL,
+        "model": MINIMAX_MODEL,
         "messages": [
             {
                 "role": "system",
@@ -60,17 +60,11 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
         "temperature": 0.7,
     }
 
-    # 兼容不同 API 端点
-    if "openrouter" in OPENAI_BASE_URL:
-        payload["model"] = LLM_MODEL
-    elif "groq" in OPENAI_BASE_URL:
-        payload["model"] = "llama-3.1-8b-instant"
-
     try:
         resp = requests.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
+            f"{MINIMAX_BASE_URL}/chat/completions",
             headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Authorization": f"Bearer {MINIMAX_API_KEY}",
                 "Content-Type": "application/json",
             },
             json=payload,

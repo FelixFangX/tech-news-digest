@@ -24,6 +24,10 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# MiniMax API 配置（双语翻译 + 深度分析专用）
+MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://minimax.a7m.com.cn/v1")
+MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7-highspeed")
 OUTPUT_DIR = Path(__file__).parent.parent / "daily"
 
 
@@ -55,90 +59,135 @@ def slug_date(dt=None):
 
 
 # ─── LLM 个人判断 ────────────────────────────────────────
-def gen_judgment(item: dict, category: str) -> str:
+def gen_deep_analysis_batch(items: list, category: str) -> list:
     """
-    调用 LLM 生成个人判断思考
+    批量为多项内容生成双语翻译 + 深度分析（调用 MiniMax）
     category: "ai_news" | "github" | "stackoverflow"
-    非专业名词用中文，简洁有力，2-4句话
+    返回更新后的 items 列表，每项增加: title_zh, abstract_zh, deep_analysis, application_scenarios
     """
-    if not OPENAI_API_KEY:
-        return ""
+    if not MINIMAX_API_KEY or not items:
+        return items
 
     if category == "ai_news":
-        user_prompt = f"{{\"title\": \"{item['title']}\", \"abstract\": \"{item.get('abstract', 'N/A')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
+        items_text = "\n".join([
+            f"[{i}] Title: {n.get('title', '')[:200]} | Abstract: {n.get('abstract', 'N/A')[:200]}"
+            for i, n in enumerate(items)
+        ])
+        user_prompt = f"""以下是今日AI论文列表，每篇需要翻译成中文并提供深度分析：
+
+{items_text}
+
+请为每篇论文输出一行JSON（不要换行，用\\n分隔）：
+{{"id": 0, "title_zh": "中文标题", "abstract_zh": "中文摘要（80字以内）", "deep_analysis": "深度分析：包含1)核心创新点 2)局限性/争议点 3)对行业的影响（100字以内）", "application_scenarios": ["落地场景1", "落地场景2"]}}
+{{"id": 1, ...}}
+
+只输出JSON数组，不要其他内容。"""
     elif category == "github":
-        user_prompt = f"{{\"name\": \"{item['name']}\", \"description\": \"{item.get('description', 'N/A')}\", \"language\": \"{item.get('language', '-')}\", \"stars\": \"{item.get('stars', '-')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
-    else:
-        user_prompt = f"{{\"title\": \"{item['title']}\", \"tags\": {item.get('tags', [])}}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
+        items_text = "\n".join([
+            f"[{i}] Name: {r.get('name', '')} | Desc: {r.get('description', 'N/A')[:100]} | Lang: {r.get('language', '-')} | Stars: {r.get('stars', '-')}"
+            for i, r in enumerate(items)
+        ])
+        user_prompt = f"""以下是今日GitHub热门项目列表，每项需要翻译成中文并提供深度分析：
+
+{items_text}
+
+请为每个项目输出一行JSON（不要换行，用\\n分隔）：
+{{"id": 0, "title_zh": "中文名称", "description_zh": "中文描述（60字以内）", "deep_analysis": "深度分析：1)核心价值 2)潜在问题 3)开发者影响（80字以内）", "application_scenarios": ["使用场景1", "使用场景2"]}}
+{{"id": 1, ...}}
+
+只输出JSON数组，不要其他内容。"""
+    else:  # stackoverflow
+        items_text = "\n".join([
+            f"[{i}] Title: {q.get('title', '')} | Tags: {','.join(q.get('tags', [])[:5])}"
+            for i, q in enumerate(items)
+        ])
+        user_prompt = f"""以下是今日StackOverflow热点问题列表，每项需要翻译成中文并提供深度分析：
+
+{items_text}
+
+请为每个问题输出一行JSON（不要换行，用\\n分隔）：
+{{"id": 0, "title_zh": "中文标题", "deep_analysis": "深度分析：1)问题核心 2)技术难点 3)实际开发价值（80字以内）", "application_scenarios": ["适用场景1", "适用场景2"]}}
+{{"id": 1, ...}}
+
+只输出JSON数组，不要其他内容。"""
 
     payload = {
-        "model": LLM_MODEL,
+        "model": MINIMAX_MODEL,
         "messages": [
-            {"role": "system", "content": "Output only a JSON object, nothing else. Example: {\"judgment\": \"some text\"}"},
-            {"role": "user", "content": f"{user_prompt}\nRespond ONLY with: {{\"judgment\": \"...\"}}"}
+            {"role": "system", "content": "You are a helpful assistant that outputs valid JSON arrays."},
+            {"role": "user", "content": user_prompt}
         ],
-        "max_tokens": 800,
+        "max_tokens": 1200,
         "temperature": 0.7,
     }
-    if "openrouter" in OPENAI_BASE_URL:
-        payload["model"] = LLM_MODEL
-    elif "groq" in OPENAI_BASE_URL:
-        payload["model"] = "llama-3.1-8b-instant"
 
     try:
         resp = requests.post(
-            f"{OPENAI_BASE_URL}/chat/completions",
+            f"{MINIMAX_BASE_URL}/chat/completions",
             headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
+                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Content-Type": "application/json"
             },
             json=payload,
-            timeout=30,
+            timeout=60,
         )
         resp.raise_for_status()
         data = resp.json()
         raw = data["choices"][0]["message"].get("content", "").strip()
-        # 尝试 JSON 解析（支持去掉 markdown 代码块）
-        try:
-            raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
-            raw = re.sub(r"\s*```$", "", raw).strip()
-            parsed = json.loads(raw)
-            answer = parsed.get("judgment", parsed.get("answer", parsed.get("summary", "")))
-            if answer:
-                return answer
-        except (json.JSONDecodeError, ValueError, AttributeError):
-            pass
-        # JSON 解析失败：检查是否被截断的 JSON（如 '{"judgment": "...' 只有开头）
-        if raw.startswith("{") and ':' in raw and raw.count('"') < 6:
-            # 尝试用正则从截断 JSON 中提取字段值
-            m = re.search(r'"\w+"\s*:\s*"([^"]*)"', raw)
-            if m:
-                return m.group(1).strip()
-        # 直接返回原始 content
-        return raw.strip('"').strip("'").strip()
+        # 清理 markdown 代码块
+        raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+        # 解析 JSONL 格式（每行一个JSON）
+        lines = raw.split("\n")
+        parsed_map = {}
+        for line in lines:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+                idx = obj.get("id")
+                if idx is not None:
+                    parsed_map[idx] = obj
+            except:
+                continue
+        # 回填到 items
+        for i, item in enumerate(items):
+            if i in parsed_map:
+                p = parsed_map[i]
+                item["title_zh"] = p.get("title_zh", p.get("description_zh", ""))
+                item["abstract_zh"] = p.get("abstract_zh", p.get("description_zh", ""))
+                item["deep_analysis"] = p.get("deep_analysis", "")
+                item["application_scenarios"] = p.get("application_scenarios", [])
+            else:
+                item["title_zh"] = ""
+                item["abstract_zh"] = ""
+                item["deep_analysis"] = "（深度分析生成失败）"
+                item["application_scenarios"] = []
     except Exception as e:
-        return f"（判断生成失败: {e}）"
+        for item in items:
+            item["title_zh"] = ""
+            item["abstract_zh"] = ""
+            item["deep_analysis"] = f"（分析失败: {e}）"
+            item["application_scenarios"] = []
+
+    return items
 
 
-def gen_all_judgments(ai_news, github_trending, stackoverflow, use_llm=True):
-    """为所有内容生成个人判断（串行，避免 API 限流）"""
-    if not use_llm or not OPENAI_API_KEY:
+
+def gen_all_deep_analysis(ai_news, github_trending, stackoverflow, use_llm=True):
+    """为所有内容生成双语翻译 + 深度分析（调用 MiniMax 批量 API）"""
+    if not use_llm or not MINIMAX_API_KEY:
         return ai_news, github_trending, stackoverflow
 
-    print("  🧠 正在生成 AI 论文个人判断...")
-    for n in ai_news:
-        n["judgment"] = gen_judgment(n, "ai_news")
-        time.sleep(0.5)
+    print("  🧠 正在生成 AI 论文双语翻译 + 深度分析...")
+    gen_deep_analysis_batch(ai_news, "ai_news")
 
-    print("  🧠 正在生成 GitHub 项目个人判断...")
-    for r in github_trending:
-        r["judgment"] = gen_judgment(r, "github")
-        time.sleep(0.5)
+    print("  🧠 正在生成 GitHub 项目双语翻译 + 深度分析...")
+    gen_deep_analysis_batch(github_trending, "github")
 
-    print("  🧠 正在生成 StackOverflow 问题个人判断...")
-    for q in stackoverflow:
-        q["judgment"] = gen_judgment(q, "stackoverflow")
-        time.sleep(0.5)
+    print("  🧠 正在生成 StackOverflow 问题双语翻译 + 深度分析...")
+    gen_deep_analysis_batch(stackoverflow, "stackoverflow")
 
     return ai_news, github_trending, stackoverflow
 
@@ -293,13 +342,24 @@ def render_template(context):
     lines.append("")
     if context["ai_news"]:
         for n in context["ai_news"]:
-            lines.append(f"### {n['title']}")
+            # 标题：中英双语
+            lines.append(f"### {n.get('title', 'N/A')}")
+            if n.get("title_zh"):
+                lines.append(f"*《{n['title_zh']}》*")
             lines.append(f"- **来源**: OpenAlex")
             lines.append(f"- **论文**: [{n['title']}]({n['url']})")
-            lines.append(f"- **发表**: {n['published']}")
-            lines.append(f"- **摘要**: {n['abstract']}")
-            if n.get("judgment"):
-                lines.append(f"- **💡 判断**: {n['judgment']}")
+            lines.append(f"- **发表**: {n.get('published', '-')}")
+            # 摘要：中英双语
+            abs_en = n.get("abstract", "无摘要")
+            lines.append(f"- **摘要**: {abs_en}")
+            if n.get("abstract_zh"):
+                lines.append(f"- **摘要（中文）**: {n['abstract_zh']}")
+            # 深度分析
+            if n.get("deep_analysis"):
+                lines.append(f"- **🔍 深度分析**: {n['deep_analysis']}")
+            if n.get("application_scenarios"):
+                scenes = " · ".join(n["application_scenarios"])
+                lines.append(f"- **🎯 落地场景**: {scenes}")
             lines.append("")
     else:
         lines.append("*今日暂无 AI 相关论文*")
@@ -313,12 +373,19 @@ def render_template(context):
     if context["github_trending"]:
         for r in context["github_trending"]:
             lines.append(f"### {r['rank']}. {r['name']}")
-            if r["description"] and r["description"] != "暂无描述":
+            if r.get("title_zh"):
+                lines.append(f"*《{r['title_zh']}》*")
+            if r.get("description") and r["description"] != "暂无描述":
                 lines.append(f">{r['description']}")
+            if r.get("abstract_zh"):
+                lines.append(f"- **描述（中文）**: {r['abstract_zh']}")
             lines.append(f"- **语言**: {r['language']} | **⭐**: {r['stars']} | **🔱**: {r['forks']}")
             lines.append(f"- **链接**: [GitHub]({r['url']})")
-            if r.get("judgment"):
-                lines.append(f"- **💡 判断**: {r['judgment']}")
+            if r.get("deep_analysis"):
+                lines.append(f"- **🔍 深度分析**: {r['deep_analysis']}")
+            if r.get("application_scenarios"):
+                scenes = " · ".join(r["application_scenarios"])
+                lines.append(f"- **🎯 落地场景**: {scenes}")
             lines.append("")
     else:
         lines.append("*今日暂无热门项目*")
@@ -382,27 +449,27 @@ def main(date_str=None, use_llm=True, use_ranking=True, deliver_channels=None):
 
     # LLM 判断
     has_judgments = False
-    if use_llm and OPENAI_API_KEY:
-        print("  🧠 正在生成个人判断...")
-        ai_news, github_trending, stackoverflow = gen_all_judgments(
+    if use_llm and MINIMAX_API_KEY:
+        print("  🧠 正在生成双语翻译 + 深度分析（MiniMax）...")
+        ai_news, github_trending, stackoverflow = gen_all_deep_analysis(
             ai_news, github_trending, stackoverflow, use_llm=True
         )
         has_judgments = True
     else:
         if not use_llm:
             print("  ⏭️ 跳过 LLM 判断（use_llm=False）")
-        elif not OPENAI_API_KEY:
-            print("  ⏭️ 跳过 LLM 判断（未配置 OPENAI_API_KEY）")
+        elif not MINIMAX_API_KEY:
+            print("  ⏭️ 跳过 LLM 判断（未配置 MINIMAX_API_KEY）")
 
-    # ── A1: 每日摘要 ───────────────────────────────────────
+    # ── A1: 每日摘要（MiniMax 生成双语摘要）──────────────────
     daily_summary = ""
-    if use_llm and OPENAI_API_KEY:
-        print("  📝 正在生成每日摘要...")
+    if use_llm and MINIMAX_API_KEY:
+        print("  📝 正在生成每日双语摘要...")
         raw_summary = gen_daily_summary(ai_news, github_trending, stackoverflow)
         daily_summary = format_summary_markdown(raw_summary)
         print(f"    摘要: {raw_summary[:50]}...")
     else:
-        print("  ⏭️ 跳过每日摘要（use_llm=False 或未配置 OPENAI_API_KEY）")
+        print("  ⏭️ 跳过每日摘要（use_llm=False 或未配置 MINIMAX_API_KEY）")
 
     context = {
         "date": date_label,
