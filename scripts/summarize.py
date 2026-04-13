@@ -49,11 +49,11 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
         "messages": [
             {
                 "role": "system",
-                "content": "Output only a JSON object, nothing else. Example: {\"summary\": \"some text\"}"
+                "content": "Output only a JSON object."
             },
             {
                 "role": "user",
-                "content": f"{prompt}\nRespond ONLY with: {{\"summary\": \"中文导语，50-80字\"}}"
+                "content": f"{prompt}\nRespond ONLY with: {{\"summary\": \"中文导语\"}}"
             }
         ],
         "max_tokens": 800,
