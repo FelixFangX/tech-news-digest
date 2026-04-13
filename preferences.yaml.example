@@ -1,0 +1,53 @@
+# 用户兴趣偏好配置
+# 复制此文件为 preferences.yaml 并填写你的配置
+
+interests:
+  # 关注的技术领域（关键词），用于匹配 AI 论文标题/摘要、GitHub 描述、SO 问题标题
+  - large language model
+  - LLM
+  - GPT
+  - transformer
+  - Python
+  - WebAssembly
+  - cloud infrastructure
+  - Kubernetes
+  - RAG
+  - fine-tuning
+
+exclude:
+  # 排除的话题（关键词匹配，不区分大小写）
+  - JavaScript
+  - React Native
+  - Ruby on Rails
+
+delivery:
+  # 启用的分发渠道
+  channels:
+    # - wechat    # 微信（使用 WeChat ilink 协议）
+    - telegram  # Telegram Bot
+    # - email     # 邮件（需配置 SMTP）
+    # - lark      # 飞书 Bot（需配置 lark_webhook_url）
+
+  # Telegram 配置
+  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+
+  # Email 配置
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  smtp_user: "${SMTP_USER}"
+  smtp_pass: "${SMTP_PASS}"
+  email_to: []
+
+  # 飞书（ Lark ）Bot 配置
+  # 在飞书群设置中添加"自定义机器人"，复制 Webhook URL
+  lark_webhook_url: "${LARK_WEBHOOK_URL}"
+
+# 采集设置
+fetch:
+  # 每类内容最大条数（0 = 不限制）
+  max_per_category: 8
+  # GitHub 搜索语言过滤（留空则不限制）
+  github_language: ""
+  # SO 问题 tag 过滤（留空则获取综合热点）
+  so_tags: []

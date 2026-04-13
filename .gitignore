@@ -7,6 +7,9 @@ __pycache__/
 # Env
 .env
 
+# User config (use preferences.yaml.example as template)
+preferences.yaml
+
 # macOS
 .DS_Store
 

@@ -10,9 +10,14 @@ import requests
 import json
 import sys
 import os
-import time
+import requests, time, re, json
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# ─── 新增模块 ───────────────────────────────────────────────
+from scripts.llm_utils import extract_response
+from scripts.summarize import gen_daily_summary, format_summary_markdown
+from scripts.rank import rank_content
 
 # ─── 配置 ───────────────────────────────────────────────
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
@@ -59,52 +64,22 @@ def gen_judgment(item: dict, category: str) -> str:
     if not OPENAI_API_KEY:
         return ""
 
-    system_prompt = (
-        "你是一位资深技术观察者，擅长用简洁有力的中文为技术资讯撰写个人点评判断。"
-        "要求：\n"
-        "1. 非专业名词全部使用中文\n"
-        "2. 判断要具体、有观点，不说废话\n"
-        "3. 2-4句话为宜\n"
-        "4. 不要重复标题已有的信息\n"
-        "5. 可以包含：对技术趋势的判断、与当前行业热点的联系、是否值得关注、学习价值\n"
-    )
-
     if category == "ai_news":
-        user_prompt = f"""为以下AI论文撰写个人判断：
-
-标题：{item['title']}
-摘要：{item.get('abstract', '无')}
-链接：{item.get('url', '')}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"title\": \"{item['title']}\", \"abstract\": \"{item.get('abstract', 'N/A')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
     elif category == "github":
-        user_prompt = f"""为以下开源项目撰写个人判断：
-
-项目：{item['name']}
-描述：{item.get('description', '无')}
-语言：{item.get('language', '-')} | Stars：{item.get('stars', '-')} | Forks：{item.get('forks', '-')}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"name\": \"{item['name']}\", \"description\": \"{item.get('description', 'N/A')}\", \"language\": \"{item.get('language', '-')}\", \"stars\": \"{item.get('stars', '-')}\"}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
     else:
-        user_prompt = f"""为以下技术问题撰写个人判断：
-
-问题：{item['title']}
-标签：{', '.join(item.get('tags', []))}
-投票：{item.get('votes', 0)} | 回答数：{item.get('answers', 0)}
-
-要求：中文，2-4句话，有个人见解。"""
+        user_prompt = f"{{\"title\": \"{item['title']}\", \"tags\": {item.get('tags', [])}}}\n输出 JSON：{{\"judgment\": \"中文点评，2-4句\"}}"
 
     payload = {
         "model": LLM_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "system", "content": "Output only a JSON object, nothing else. Example: {\"judgment\": \"some text\"}"},
+            {"role": "user", "content": f"{user_prompt}\nRespond ONLY with: {{\"judgment\": \"...\"}}"}
         ],
-        "max_tokens": 300,
+        "max_tokens": 800,
         "temperature": 0.7,
     }
-
-    # 兼容不同 API 端点
     if "openrouter" in OPENAI_BASE_URL:
         payload["model"] = LLM_MODEL
     elif "groq" in OPENAI_BASE_URL:
@@ -122,8 +97,25 @@ def gen_judgment(item: dict, category: str) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        return content
+        raw = data["choices"][0]["message"].get("content", "").strip()
+        # 尝试 JSON 解析（支持去掉 markdown 代码块）
+        try:
+            raw = re.sub(r"^```(?:json)?\s*", "", raw).strip()
+            raw = re.sub(r"\s*```$", "", raw).strip()
+            parsed = json.loads(raw)
+            answer = parsed.get("judgment", parsed.get("answer", parsed.get("summary", "")))
+            if answer:
+                return answer
+        except (json.JSONDecodeError, ValueError, AttributeError):
+            pass
+        # JSON 解析失败：检查是否被截断的 JSON（如 '{"judgment": "...' 只有开头）
+        if raw.startswith("{") and ':' in raw and raw.count('"') < 6:
+            # 尝试用正则从截断 JSON 中提取字段值
+            m = re.search(r'"\w+"\s*:\s*"([^"]*)"', raw)
+            if m:
+                return m.group(1).strip()
+        # 直接返回原始 content
+        return raw.strip('"').strip("'").strip()
     except Exception as e:
         return f"（判断生成失败: {e}）"
 
@@ -273,7 +265,6 @@ def fetch_stackoverflow(tags=None, limit=5):
         })
     return questions
 
-
 # ─── 渲染 Markdown ───────────────────────────────────────
 def render_template(context):
     lines = []
@@ -284,6 +275,11 @@ def render_template(context):
     lines.append("")
     lines.append("---")
     lines.append("")
+    # ── A1: 每日摘要（如果有）──
+    daily_summary = context.get("daily_summary", "")
+    if daily_summary:
+        lines.append(daily_summary)
+        lines.append("")
 
     # ── AI 资讯 ──
     lines.append("## 🤖 AI 资讯")
@@ -348,10 +344,12 @@ def render_template(context):
 
 
 # ─── 主流程 ───────────────────────────────────────────────
-def main(date_str=None, use_llm=True):
+def main(date_str=None, use_llm=True, use_ranking=True, deliver_channels=None):
     """
     date_str: YYYY-MM-DD 格式，None 表示今天
     use_llm: 是否调用 LLM 生成判断
+    use_ranking: 是否启用个性化排序（基于 preferences.yaml）
+    deliver_channels: 分发渠道列表，None 则跳过分发
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     dt = make_date(date_str)
@@ -360,13 +358,20 @@ def main(date_str=None, use_llm=True):
 
     print(f"📡 正在采集数据...（日期: {date_label}）")
     print("  🤖 OpenAlex AI 论文...")
-    ai_news = fetch_openalex_news(dt=dt, limit=5)
+    ai_news = fetch_openalex_news(dt=dt, limit=8)
 
     print("  🔥 GitHub 高星活跃项目...")
-    github_trending = fetch_github_trending(dt=dt, limit=8)
+    github_trending = fetch_github_trending(dt=dt, limit=12)
 
     print("  💬 StackOverflow 热点...")
-    stackoverflow = fetch_stackoverflow(tags=["python", "javascript", "machine-learning"], limit=5)
+    stackoverflow = fetch_stackoverflow(tags=["python", "javascript", "machine-learning"], limit=8)
+
+    # ── B1/B2: 个性化排序 ──────────────────────────────────
+    if use_ranking:
+        print("  🎯 个性化排序中（读取 preferences.yaml）...")
+        ai_news, github_trending, stackoverflow = rank_content(
+            ai_news, github_trending, stackoverflow
+        )
 
     # LLM 判断
     has_judgments = False
@@ -382,12 +387,23 @@ def main(date_str=None, use_llm=True):
         elif not OPENAI_API_KEY:
             print("  ⏭️ 跳过 LLM 判断（未配置 OPENAI_API_KEY）")
 
+    # ── A1: 每日摘要 ───────────────────────────────────────
+    daily_summary = ""
+    if use_llm and OPENAI_API_KEY:
+        print("  📝 正在生成每日摘要...")
+        raw_summary = gen_daily_summary(ai_news, github_trending, stackoverflow)
+        daily_summary = format_summary_markdown(raw_summary)
+        print(f"    摘要: {raw_summary[:50]}...")
+    else:
+        print("  ⏭️ 跳过每日摘要（use_llm=False 或未配置 OPENAI_API_KEY）")
+
     context = {
         "date": date_label,
         "ai_news": ai_news,
         "github_trending": github_trending,
         "stackoverflow": stackoverflow,
         "has_judgments": has_judgments,
+        "daily_summary": daily_summary,
     }
 
     print("  📝 渲染 Markdown...")
@@ -397,15 +413,51 @@ def main(date_str=None, use_llm=True):
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(md_content)
 
+    # ── B3: 多渠道分发 ────────────────────────────────────
+    if deliver_channels:
+        print(f"  📬 开始分发到: {', '.join(deliver_channels)} ...")
+        from deliver import deliver
+        results = deliver(md_content, deliver_channels)
+        for ch, ok in results.items():
+            print(f"     {ch}: {'✅' if ok else '❌'}")
+
     print(f"\n✅ 生成完成: {out_file}")
     print(f"   - AI 资讯: {len(ai_news)} 条")
     print(f"   - GitHub: {len(github_trending)} 条")
     print(f"   - StackOverflow: {len(stackoverflow)} 条")
     print(f"   - LLM 判断: {'✅' if has_judgments else '❌'}")
+    print(f"   - 每日摘要: {'✅' if daily_summary else '❌'}")
     return str(out_file)
 
 
 if __name__ == "__main__":
-    date_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    # 找出第一个非 flag 参数作为日期
+    date_arg = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--"):
+            date_arg = arg
+            break
+
     use_llm = "--no-llm" not in sys.argv
-    main(date_str=date_arg, use_llm=use_llm)
+    use_ranking = "--no-ranking" not in sys.argv
+
+    # 解析 --deliver 参数
+    deliver_channels = None
+    trends_output = None
+    for arg in sys.argv:
+        if arg.startswith("--deliver="):
+            deliver_channels = [ch.strip() for ch in arg.split("=", 1)[1].split(",") if ch.strip()]
+        if arg.startswith("--trends"):
+            # 解析 --trends=7 或 --trends
+            n_str = arg.split("=", 1)[1] if "=" in arg else "7"
+            trends_output = n_str if n_str else "7"
+
+    main(date_str=date_arg, use_llm=use_llm, use_ranking=use_ranking, deliver_channels=deliver_channels)
+
+    # ── A2: 趋势分析 ────────────────────────────────────────
+    if trends_output:
+        from analyze_trends import gen_weekly_trends
+        n = int(trends_output) if trends_output.isdigit() else 7
+        output_path = f"daily/trends-{datetime.now().strftime('%Y-%m-%d')}.md"
+        md = gen_weekly_trends(n=n, output_path=output_path)
+        print(f"\n📊 趋势分析已生成: {output_path}")
