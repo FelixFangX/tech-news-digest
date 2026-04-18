@@ -176,18 +176,18 @@ def gen_deep_analysis_batch(items: list, category: str) -> list:
     parsed_map = {}
     for start in range(0, len(items), BATCH_SIZE):
         sub = items[start:start + BATCH_SIZE]
-        for attempt in range(3):
+        for attempt in range(6):  # 增加到6次重试
             try:
                 result = _call_minimax(sub, id_offset=start)
                 parsed_map.update(result)
                 break
             except Exception as e:
-                if attempt < 2:
-                    time.sleep(2 ** attempt)  # 指数退避: 1s, 2s
+                if attempt < 5:
+                    time.sleep(3 ** attempt)  # 指数退避: 3s, 9s, 27s, 81s
                 else:
-                    pass  # 3次全失败则留空，由回填逻辑处理
-        # 每批之间短暂停顿，避免触发速率限制
-        time.sleep(0.5)
+                    pass  # 6次全失败则留空，由回填逻辑处理
+        # 每批之间停顿，避免触发速率限制
+        time.sleep(1.0)  # 从0.5s增加到1s
 
     # 回填结果
     for i, item in enumerate(items):
@@ -195,7 +195,13 @@ def gen_deep_analysis_batch(items: list, category: str) -> list:
             p = parsed_map[i]
             item["title_zh"] = p.get("title_zh", p.get("description_zh", ""))
             item["abstract_zh"] = p.get("abstract_zh", p.get("description_zh", ""))
-            item["deep_analysis"] = p.get("deep_analysis", "")
+            # 去除 MiniMax 返回值中可能携带的 "深度分析：" 前缀，避免与模板前缀重复
+            da = p.get("deep_analysis", "")
+            for prefix in ("深度分析：", "深度分析:", "深度分析 "):
+                if da.startswith(prefix):
+                    da = da[len(prefix):]
+                    break
+            item["deep_analysis"] = da
             item["application_scenarios"] = p.get("application_scenarios", [])
         else:
             item["title_zh"] = item.get("title_zh", "")
