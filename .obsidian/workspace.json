@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "daily/2026-04-17.md",
+                "file": "daily/2026-04-21.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "2026-04-17"
+              "title": "2026-04-21"
             }
           }
         ]
@@ -198,11 +198,12 @@
   "active": "c580db5feb2c0127",
   "lastOpenFiles": [
     "daily/2026-04-20.md",
+    "daily/2026-04-21.md",
+    "daily/2026-04-17.md",
     "daily/2026-04-19.md",
     "templates/daily_template.md",
     "templates/daily_ai_template.md",
     "README_zh.md",
-    "daily/2026-04-17.md",
     "daily/2026-04-15.md",
     "daily/2026-04-16.md",
     "daily/2026-04-14.md",
