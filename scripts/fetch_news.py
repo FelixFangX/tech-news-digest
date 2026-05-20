@@ -87,7 +87,7 @@ def gen_deep_analysis_batch(items: list, category: str) -> list:
     if not LLM_API_KEY or not items:
         return items
 
-    BATCH_SIZE = 1
+    BATCH_SIZE = 3
 
     def _call_minimax(sub_items, id_offset=0):
         """为子列表构建 prompt 并调用 API（单次请求）"""
@@ -140,7 +140,7 @@ def gen_deep_analysis_batch(items: list, category: str) -> list:
                 {"role": "system", "content": "You are a helpful assistant that outputs valid JSON arrays. Output ONLY the JSON, no markdown fences, no explanation."},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 1200,
+            "max_tokens": 4096,
             "temperature": 0.7,
         }
 

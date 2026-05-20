@@ -185,7 +185,7 @@ GitHub 热门每日数量：{gh_counts}
             {"role": "system", "content": "Output only a JSON object, nothing else. No markdown fences. Example: {\"commentary\": \"some text\"}"},
             {"role": "user", "content": f"{prompt}\nRespond ONLY with: {{\"commentary\": \"...\"}}"}
         ],
-        "max_tokens": 800,
+        "max_tokens": 2048,
         "temperature": 0.7,
     }
 

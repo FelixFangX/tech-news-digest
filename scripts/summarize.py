@@ -72,7 +72,7 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
                 "content": f"{prompt}\nRespond ONLY with: {{\"summary\": \"中文导语\"}}"
             }
         ],
-        "max_tokens": 800,
+        "max_tokens": 2048,
         "temperature": 0.7,
     }
 
@@ -92,7 +92,7 @@ def gen_daily_summary(ai_news: List[dict], github_trending: List[dict], stackove
         msg = data["choices"][0]["message"]
         raw = extract_response(msg)
         if finish_reason == "length" or not raw:
-            payload["max_tokens"] = 1200
+            payload["max_tokens"] = 4096
             resp2 = requests.post(
                 f"{LLM_BASE_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"},
@@ -123,6 +123,4 @@ def format_summary_markdown(summary: str) -> str:
     """将摘要格式化为 Markdown 片段"""
     if not summary or summary.startswith("（"):
         return ""
-    return f"""> **今日要点** {summary}
-
----"""
+    return f"""> **今日要点** {summary}\n\n---"""
