@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "daily/2026-06-05.md",
+                "file": "daily/2026-06-08.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "2026-06-05"
+              "title": "2026-06-08"
             }
           }
         ]
@@ -78,7 +78,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "right": {
     "id": "aeb6dfed13722fb8",
@@ -197,8 +198,8 @@
   },
   "active": "01b99b3d5126bd48",
   "lastOpenFiles": [
-    "daily/2026-06-04.md",
     "daily/2026-06-05.md",
+    "daily/2026-06-04.md",
     "daily/2026-06-02.md",
     "daily/2026-05-31.md",
     "daily/2026-05-29.md",
